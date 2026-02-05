@@ -87,7 +87,18 @@ class ERPDesktopApp(tk.Tk):
     def _load_data_from_db(self) -> None:
         self.users_data = self.db.fetch_rows(
             "users",
-            ("id", "departamento", "nome", "perfil", "username", "senha", "telefone", "ramal", "email"),
+            (
+                "id",
+                "departamento",
+                "nome",
+                "perfil",
+                "username",
+                "senha",
+                "senha_hash",
+                "telefone",
+                "ramal",
+                "email",
+            ),
         )
         self._sync_user_group_labels()
         self.equipment_data = self.db.fetch_rows(
@@ -287,7 +298,9 @@ class ERPDesktopApp(tk.Tk):
             return
 
         has_credentials = any(
-            user.get("username", "").strip() and user.get("senha", "").strip() for user in self.users_data
+            user.get("username", "").strip()
+            and (user.get("senha_hash", "").strip() or user.get("senha", "").strip())
+            for user in self.users_data
         )
         # Compatibilidade inicial: enquanto nao houver login cadastrado, permite entrar com usuario digitado.
         if not has_credentials and username:
@@ -546,6 +559,7 @@ class ERPDesktopApp(tk.Tk):
             "perfil": "",
             "username": "",
             "senha": "",
+            "senha_hash": "",
             "telefone": "",
             "ramal": "",
             "email": "",
@@ -554,7 +568,18 @@ class ERPDesktopApp(tk.Tk):
         self.db.insert_row("users", user_to_save)
         self.users_data = self.db.fetch_rows(
             "users",
-            ("id", "departamento", "nome", "perfil", "username", "senha", "telefone", "ramal", "email"),
+            (
+                "id",
+                "departamento",
+                "nome",
+                "perfil",
+                "username",
+                "senha",
+                "senha_hash",
+                "telefone",
+                "ramal",
+                "email",
+            ),
         )
         self._sync_user_group_labels()
         self._refresh_users_table()
@@ -685,7 +710,10 @@ class ERPDesktopApp(tk.Tk):
                 groups_list.insert(tk.END, item["nome"])
 
         def refresh_users() -> None:
-            users = self.db.fetch_rows("users", ("id", "departamento", "nome", "perfil", "username", "senha"))
+            users = self.db.fetch_rows(
+                "users",
+                ("id", "departamento", "nome", "perfil", "username", "senha", "senha_hash"),
+            )
             state["users"] = users
             display = []
             user_map = {}
@@ -761,7 +789,7 @@ class ERPDesktopApp(tk.Tk):
                 login_password_var.set("")
                 return
             login_username_var.set(selected_user.get("username", ""))
-            login_password_var.set(selected_user.get("senha", ""))
+            login_password_var.set("")
 
         def save_user_credentials() -> None:
             user_label = user_combo_var.get().strip()
@@ -784,7 +812,18 @@ class ERPDesktopApp(tk.Tk):
                 user_combo_var.set(selected_label)
             self.users_data = self.db.fetch_rows(
                 "users",
-                ("id", "departamento", "nome", "perfil", "username", "senha", "telefone", "ramal", "email"),
+                (
+                    "id",
+                    "departamento",
+                    "nome",
+                    "perfil",
+                    "username",
+                    "senha",
+                    "senha_hash",
+                    "telefone",
+                    "ramal",
+                    "email",
+                ),
             )
             self._sync_user_group_labels()
             self._refresh_users_table()

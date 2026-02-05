@@ -1,8 +1,15 @@
 import sqlite3
+import hashlib
+import hmac
+import os
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from pathlib import Path
 
 
 class DatabaseManager:
+    PASSWORD_PEPPER = "Sidertec01"
+    PASSWORD_ITERATIONS = 200_000
+
     def __init__(self, db_path: str = "erpti.db") -> None:
         self.db_path = Path(db_path)
 
@@ -32,6 +39,8 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE users ADD COLUMN username TEXT NOT NULL DEFAULT ''")
             if "senha" not in user_columns:
                 cursor.execute("ALTER TABLE users ADD COLUMN senha TEXT NOT NULL DEFAULT ''")
+            if "senha_hash" not in user_columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN senha_hash TEXT NOT NULL DEFAULT ''")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS access_folders (
@@ -228,6 +237,62 @@ class DatabaseManager:
                 )
 
             conn.commit()
+            self._migrate_plaintext_passwords(conn)
+
+    def _hash_password(self, password: str) -> str:
+        salt = os.urandom(16)
+        derived = hashlib.pbkdf2_hmac(
+            "sha256",
+            (password + self.PASSWORD_PEPPER).encode("utf-8"),
+            salt,
+            self.PASSWORD_ITERATIONS,
+        )
+        salt_b64 = urlsafe_b64encode(salt).decode("ascii")
+        hash_b64 = urlsafe_b64encode(derived).decode("ascii")
+        return f"pbkdf2_sha256${self.PASSWORD_ITERATIONS}${salt_b64}${hash_b64}"
+
+    def _verify_password(self, password: str, encoded_hash: str) -> bool:
+        try:
+            algorithm, rounds, salt_b64, hash_b64 = encoded_hash.split("$", 3)
+        except ValueError:
+            return False
+        if algorithm != "pbkdf2_sha256":
+            return False
+        try:
+            salt = urlsafe_b64decode(salt_b64.encode("ascii"))
+            stored_hash = urlsafe_b64decode(hash_b64.encode("ascii"))
+            iterations = int(rounds)
+        except Exception:
+            return False
+        candidate = hashlib.pbkdf2_hmac(
+            "sha256",
+            (password + self.PASSWORD_PEPPER).encode("utf-8"),
+            salt,
+            iterations,
+        )
+        return hmac.compare_digest(candidate, stored_hash)
+
+    def _migrate_plaintext_passwords(self, conn: sqlite3.Connection) -> None:
+        cursor = conn.cursor()
+        rows = cursor.execute(
+            """
+            SELECT id, senha, senha_hash
+            FROM users
+            WHERE TRIM(COALESCE(senha, '')) <> ''
+            """
+        ).fetchall()
+        changed = False
+        for user_id, plain_password, stored_hash in rows:
+            if stored_hash:
+                continue
+            password_hash = self._hash_password(plain_password)
+            cursor.execute(
+                "UPDATE users SET senha_hash = ?, senha = '' WHERE id = ?",
+                (password_hash, user_id),
+            )
+            changed = True
+        if changed:
+            conn.commit()
 
     def fetch_rows(self, table: str, columns: tuple[str, ...]) -> list[dict[str, str]]:
         with sqlite3.connect(self.db_path) as conn:
@@ -344,6 +409,7 @@ class DatabaseManager:
             return {int(user_id): groups for user_id, groups in rows}
 
     def set_user_credentials(self, user_id: int, username: str, senha: str) -> bool:
+        password_hash = self._hash_password(senha)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             exists = cursor.execute(
@@ -357,8 +423,8 @@ class DatabaseManager:
             if exists:
                 return False
             cursor.execute(
-                "UPDATE users SET username = ?, senha = ? WHERE id = ?",
-                (username, senha, user_id),
+                "UPDATE users SET username = ?, senha_hash = ?, senha = '' WHERE id = ?",
+                (username, password_hash, user_id),
             )
             conn.commit()
             return True
@@ -369,14 +435,33 @@ class DatabaseManager:
             cursor = conn.cursor()
             row = cursor.execute(
                 """
-                SELECT id, nome, username
+                SELECT id, nome, username, senha, senha_hash
                 FROM users
-                WHERE LOWER(username) = LOWER(?) AND senha = ?
+                WHERE LOWER(username) = LOWER(?)
                 LIMIT 1
                 """,
-                (username, senha),
+                (username,),
             ).fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+
+            user = dict(row)
+            stored_hash = (user.get("senha_hash") or "").strip()
+            stored_plain = (user.get("senha") or "").strip()
+
+            if stored_hash and self._verify_password(senha, stored_hash):
+                return {"id": user["id"], "nome": user["nome"], "username": user["username"]}
+
+            if stored_plain and hmac.compare_digest(stored_plain, senha):
+                password_hash = self._hash_password(senha)
+                cursor.execute(
+                    "UPDATE users SET senha_hash = ?, senha = '' WHERE id = ?",
+                    (password_hash, user["id"]),
+                )
+                conn.commit()
+                return {"id": user["id"], "nome": user["nome"], "username": user["username"]}
+
+            return None
 
     def insert_chamado(
         self,
