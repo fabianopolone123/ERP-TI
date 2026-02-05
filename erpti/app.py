@@ -480,7 +480,12 @@ class ERPDesktopApp(tk.Tk):
         ).grid(row=2, column=0, sticky="e")
 
         columns = ("departamento", "nome", "perfil")
-        self.users_table = ttk.Treeview(tab, columns=columns, show="headings", height=12)
+        users_table_frame = ttk.Frame(tab, style="Card.TFrame")
+        users_table_frame.grid(row=3, column=0, sticky="nsew", pady=(18, 0))
+        users_table_frame.columnconfigure(0, weight=1)
+        users_table_frame.rowconfigure(0, weight=1)
+
+        self.users_table = ttk.Treeview(users_table_frame, columns=columns, show="headings", height=12)
         self._users_sort_reverse = {column: False for column in columns}
         self.users_table.heading(
             "departamento",
@@ -500,11 +505,6 @@ class ERPDesktopApp(tk.Tk):
         self.users_table.column("departamento", width=180)
         self.users_table.column("nome", width=320)
         self.users_table.column("perfil", width=260)
-
-        users_table_frame = ttk.Frame(tab, style="Card.TFrame")
-        users_table_frame.grid(row=3, column=0, sticky="nsew", pady=(18, 0))
-        users_table_frame.columnconfigure(0, weight=1)
-        users_table_frame.rowconfigure(0, weight=1)
         self.users_table.grid(row=0, column=0, sticky="nsew")
 
         users_scroll = ttk.Scrollbar(users_table_frame, orient="vertical", command=self.users_table.yview)
