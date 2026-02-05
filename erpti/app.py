@@ -278,6 +278,7 @@ class ERPDesktopApp(tk.Tk):
         ttk.Label(card, text="Usuario", style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
         self.login_user = ttk.Entry(card, font=("Segoe UI", 11))
         self.login_user.pack(fill="x", ipady=6)
+        self.login_user.insert(0, "Fabiano Polone")
 
         ttk.Label(card, text="Senha", style="Sub.TLabel").pack(anchor="w", pady=(18, 5))
         self.login_password = ttk.Entry(card, show="*", font=("Segoe UI", 11))
@@ -291,6 +292,13 @@ class ERPDesktopApp(tk.Tk):
     def _login(self) -> None:
         username = self.login_user.get().strip()
         senha = self.login_password.get().strip()
+
+        # Acesso rapido solicitado: entrar direto como Fabiano Polone sem senha.
+        if not senha and (not username or username.lower() == "fabiano polone"):
+            self.current_user.set("Fabiano Polone")
+            self._show_dashboard()
+            return
+
         auth_user = self.db.authenticate_user(username, senha)
         if auth_user:
             self.current_user.set(auth_user.get("nome") or auth_user.get("username") or username)
