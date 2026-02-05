@@ -87,7 +87,7 @@ class ERPDesktopApp(tk.Tk):
     def _load_data_from_db(self) -> None:
         self.users_data = self.db.fetch_rows(
             "users",
-            ("id", "departamento", "nome", "perfil", "telefone", "ramal", "email"),
+            ("id", "departamento", "nome", "perfil", "username", "senha", "telefone", "ramal", "email"),
         )
         self._sync_user_group_labels()
         self.equipment_data = self.db.fetch_rows(
@@ -277,10 +277,24 @@ class ERPDesktopApp(tk.Tk):
         )
 
     def _login(self) -> None:
-        user = self.login_user.get().strip()
-        if user:
-            self.current_user.set(user)
-        self._show_dashboard()
+        username = self.login_user.get().strip()
+        senha = self.login_password.get().strip()
+        auth_user = self.db.authenticate_user(username, senha)
+        if auth_user:
+            self.current_user.set(auth_user.get("nome") or auth_user.get("username") or username)
+            self._show_dashboard()
+            return
+
+        has_credentials = any(
+            user.get("username", "").strip() and user.get("senha", "").strip() for user in self.users_data
+        )
+        # Compatibilidade inicial: enquanto nao houver login cadastrado, permite entrar com usuario digitado.
+        if not has_credentials and username:
+            self.current_user.set(username)
+            self._show_dashboard()
+            return
+
+        messagebox.showerror("Login invalido", "Usuario ou senha incorretos.")
 
     def _show_dashboard(self) -> None:
         self._clear_screen()
@@ -529,6 +543,8 @@ class ERPDesktopApp(tk.Tk):
             "departamento": new_user["departamento"],
             "nome": new_user["nome"],
             "perfil": "",
+            "username": "",
+            "senha": "",
             "telefone": "",
             "ramal": "",
             "email": "",
@@ -537,7 +553,7 @@ class ERPDesktopApp(tk.Tk):
         self.db.insert_row("users", user_to_save)
         self.users_data = self.db.fetch_rows(
             "users",
-            ("id", "departamento", "nome", "perfil", "telefone", "ramal", "email"),
+            ("id", "departamento", "nome", "perfil", "username", "senha", "telefone", "ramal", "email"),
         )
         self._sync_user_group_labels()
         self._refresh_users_table()
@@ -657,6 +673,8 @@ class ERPDesktopApp(tk.Tk):
             "selected_group_id": None,
             "user_map": {},
         }
+        login_username_var = tk.StringVar()
+        login_password_var = tk.StringVar()
 
         def refresh_groups() -> None:
             groups = self.db.fetch_user_groups()
@@ -666,18 +684,19 @@ class ERPDesktopApp(tk.Tk):
                 groups_list.insert(tk.END, item["nome"])
 
         def refresh_users() -> None:
-            users = self.db.fetch_rows("users", ("id", "departamento", "nome", "perfil"))
+            users = self.db.fetch_rows("users", ("id", "departamento", "nome", "perfil", "username", "senha"))
             state["users"] = users
             display = []
             user_map = {}
             for item in users:
-                label = f"{item['nome']} ({item['departamento']})"
+                label = f"{item['nome']} ({item['departamento']}) [id:{item['id']}]"
                 display.append(label)
                 user_map[label] = int(item["id"])
             state["user_map"] = user_map
             user_combo["values"] = display
             if display:
                 user_combo.current(0)
+                load_user_credentials()
 
         def refresh_members() -> None:
             members_list.delete(0, tk.END)
@@ -728,6 +747,47 @@ class ERPDesktopApp(tk.Tk):
             self._sync_user_group_labels()
             self._refresh_users_table()
 
+        def load_user_credentials(_event=None) -> None:
+            user_label = user_combo_var.get().strip()
+            user_id = state["user_map"].get(user_label)
+            if not user_id:
+                login_username_var.set("")
+                login_password_var.set("")
+                return
+            selected_user = next((user for user in state["users"] if int(user["id"]) == int(user_id)), None)
+            if not selected_user:
+                login_username_var.set("")
+                login_password_var.set("")
+                return
+            login_username_var.set(selected_user.get("username", ""))
+            login_password_var.set(selected_user.get("senha", ""))
+
+        def save_user_credentials() -> None:
+            user_label = user_combo_var.get().strip()
+            user_id = state["user_map"].get(user_label)
+            if not user_id:
+                messagebox.showwarning("Selecao obrigatoria", "Selecione um usuario.")
+                return
+            username = login_username_var.get().strip()
+            password = login_password_var.get().strip()
+            if not username or not password:
+                messagebox.showwarning("Campos obrigatorios", "Preencha username e senha.")
+                return
+            if not self.db.set_user_credentials(user_id, username, password):
+                messagebox.showwarning("Username em uso", "Este username ja esta cadastrado para outro usuario.")
+                return
+            messagebox.showinfo("Sucesso", "Credenciais salvas.")
+            selected_label = user_label
+            refresh_users()
+            if selected_label in state["user_map"]:
+                user_combo_var.set(selected_label)
+            self.users_data = self.db.fetch_rows(
+                "users",
+                ("id", "departamento", "nome", "perfil", "username", "senha", "telefone", "ramal", "email"),
+            )
+            self._sync_user_group_labels()
+            self._refresh_users_table()
+
         ttk.Button(left, text="Cadastrar grupo", style="Action.TButton", command=add_group).grid(
             row=3, column=0, sticky="ew", pady=(8, 0)
         )
@@ -737,8 +797,23 @@ class ERPDesktopApp(tk.Tk):
             style="Action.TButton",
             command=add_user_to_group,
         ).grid(row=2, column=0, sticky="w")
+        ttk.Label(right, text="Username", style="Sub.TLabel").grid(row=3, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(right, textvariable=login_username_var, font=("Segoe UI", 11)).grid(
+            row=4, column=0, sticky="ew", pady=(4, 0)
+        )
+        ttk.Label(right, text="Senha", style="Sub.TLabel").grid(row=5, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(right, textvariable=login_password_var, show="*", font=("Segoe UI", 11)).grid(
+            row=6, column=0, sticky="ew", pady=(4, 0)
+        )
+        ttk.Button(
+            right,
+            text="Salvar login do usuario",
+            style="Action.TButton",
+            command=save_user_credentials,
+        ).grid(row=7, column=0, sticky="w", pady=(8, 0))
 
         groups_list.bind("<<ListboxSelect>>", select_group)
+        user_combo.bind("<<ComboboxSelected>>", load_user_credentials)
         refresh_groups()
         refresh_users()
 

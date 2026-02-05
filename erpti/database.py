@@ -17,6 +17,8 @@ class DatabaseManager:
                     departamento TEXT NOT NULL,
                     nome TEXT NOT NULL,
                     perfil TEXT NOT NULL DEFAULT '',
+                    username TEXT NOT NULL DEFAULT '',
+                    senha TEXT NOT NULL DEFAULT '',
                     telefone TEXT NOT NULL,
                     ramal TEXT NOT NULL,
                     email TEXT NOT NULL
@@ -26,6 +28,10 @@ class DatabaseManager:
             user_columns = {row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()}
             if "perfil" not in user_columns:
                 cursor.execute("ALTER TABLE users ADD COLUMN perfil TEXT NOT NULL DEFAULT ''")
+            if "username" not in user_columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN username TEXT NOT NULL DEFAULT ''")
+            if "senha" not in user_columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN senha TEXT NOT NULL DEFAULT ''")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS access_folders (
@@ -333,6 +339,41 @@ class DatabaseManager:
                 """
             ).fetchall()
             return {int(user_id): groups for user_id, groups in rows}
+
+    def set_user_credentials(self, user_id: int, username: str, senha: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            exists = cursor.execute(
+                """
+                SELECT 1 FROM users
+                WHERE LOWER(username) = LOWER(?) AND id <> ?
+                LIMIT 1
+                """,
+                (username, user_id),
+            ).fetchone()
+            if exists:
+                return False
+            cursor.execute(
+                "UPDATE users SET username = ?, senha = ? WHERE id = ?",
+                (username, senha, user_id),
+            )
+            conn.commit()
+            return True
+
+    def authenticate_user(self, username: str, senha: str) -> dict[str, str] | None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            row = cursor.execute(
+                """
+                SELECT id, nome, username
+                FROM users
+                WHERE LOWER(username) = LOWER(?) AND senha = ?
+                LIMIT 1
+                """,
+                (username, senha),
+            ).fetchone()
+            return dict(row) if row else None
 
     def insert_chamado(
         self,
