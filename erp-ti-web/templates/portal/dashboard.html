@@ -1,0 +1,19 @@
+{% extends "portal/base.html" %}
+
+{% block content %}
+<div class="card card-panel shadow-sm">
+    <div class="card-body">
+        <h5 class="mb-2">Bem-vindo ao novo sistema web</h5>
+        <p class="muted mb-4">Selecione um modulo na aba acima para cadastrar e consultar dados.</p>
+        <div class="row g-3">
+            {% for module in modules %}
+                <div class="col-md-3 col-sm-6">
+                    <a href="{% url 'module-page' module.key %}" class="btn btn-outline-info w-100 py-3">
+                        {{ module.title }}
+                    </a>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,81 @@
+{% extends "portal/base.html" %}
+{% load portal_extras %}
+
+{% block content %}
+<div class="row g-3">
+    <div class="col-xl-8">
+        <div class="card card-panel shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="m-0">{{ active_module.title }}</h5>
+                    <button class="btn btn-info" data-bs-toggle="modal" data-bs-target="#formModal">Cadastrar</button>
+                </div>
+                <div class="table-wrap">
+                    <table class="table table-sm table-striped table-dark align-middle mb-0">
+                        <thead>
+                            <tr>
+                                {% for col in columns %}
+                                    <th>{{ col|title }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in rows %}
+                                <tr>
+                                    {% for col in columns %}
+                                        <td>{{ row|attr:col }}</td>
+                                    {% endfor %}
+                                </tr>
+                            {% empty %}
+                                <tr>
+                                    <td colspan="{{ columns|length }}" class="text-center muted">Sem registros.</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="card card-panel shadow-sm">
+            <div class="card-body">
+                <h6>Resumo</h6>
+                <p class="muted mb-2">Registros: {{ rows|length }}</p>
+                <p class="muted mb-0">Use o botao cadastrar para incluir novos dados.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="formModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Cadastrar em {{ active_module.title }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post">
+                <div class="modal-body">
+                    {% csrf_token %}
+                    <div class="row g-3">
+                        {% for field in form %}
+                            <div class="col-md-6">
+                                <label class="form-label">{{ field.label }}</label>
+                                {{ field }}
+                                {% if field.errors %}
+                                    <div class="text-danger small">{{ field.errors|striptags }}</div>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-info">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
