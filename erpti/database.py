@@ -171,6 +171,7 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     titulo TEXT NOT NULL,
                     descricao TEXT NOT NULL,
+                    autor TEXT NOT NULL DEFAULT '',
                     tipo TEXT NOT NULL DEFAULT '',
                     urgencia TEXT NOT NULL DEFAULT '',
                     arquivo TEXT NOT NULL DEFAULT '',
@@ -178,9 +179,25 @@ class DatabaseManager:
                 )
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chamado_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chamado_id INTEGER NOT NULL,
+                    canal TEXT NOT NULL,
+                    autor TEXT NOT NULL,
+                    mensagem TEXT NOT NULL,
+                    arquivo TEXT NOT NULL DEFAULT '',
+                    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(chamado_id) REFERENCES chamados(id)
+                )
+                """
+            )
             chamado_columns = {
                 row[1] for row in cursor.execute("PRAGMA table_info(chamados)").fetchall()
             }
+            if "autor" not in chamado_columns:
+                cursor.execute("ALTER TABLE chamados ADD COLUMN autor TEXT NOT NULL DEFAULT ''")
             if "tipo" not in chamado_columns:
                 cursor.execute("ALTER TABLE chamados ADD COLUMN tipo TEXT NOT NULL DEFAULT ''")
             if "urgencia" not in chamado_columns:
@@ -321,6 +338,7 @@ class DatabaseManager:
         self,
         titulo: str,
         descricao: str,
+        autor: str,
         tipo: str,
         urgencia: str,
         arquivo: str,
@@ -330,10 +348,10 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO chamados (titulo, descricao, tipo, urgencia, arquivo, status)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO chamados (titulo, descricao, autor, tipo, urgencia, arquivo, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (titulo, descricao, tipo, urgencia, arquivo, status),
+                (titulo, descricao, autor, tipo, urgencia, arquivo, status),
             )
             conn.commit()
             return int(cursor.lastrowid)
@@ -361,10 +379,12 @@ class DatabaseManager:
                     t.id,
                     t.title,
                     t.description,
+                    COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.username, ''),
                     t.ticket_type,
                     t.urgency,
                     COALESCE(a.files, '')
                 FROM tickets_ticket t
+                LEFT JOIN auth_user u ON u.id = t.created_by_id
                 LEFT JOIN (
                     SELECT ticket_id, GROUP_CONCAT(file, '; ') AS files
                     FROM tickets_ticketattachment
@@ -375,7 +395,7 @@ class DatabaseManager:
             legacy_rows = legacy_cur.execute(query).fetchall()
 
             for row in legacy_rows:
-                legacy_id, title, description, ticket_type, urgency, files = row
+                legacy_id, title, description, autor, ticket_type, urgency, files = row
                 exists = cursor.execute(
                     """
                     SELECT 1
@@ -392,12 +412,13 @@ class DatabaseManager:
                 cursor.execute(
                     """
                     INSERT INTO chamados (
-                        titulo, descricao, tipo, urgencia, arquivo, status, legacy_source, legacy_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        titulo, descricao, autor, tipo, urgencia, arquivo, status, legacy_source, legacy_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         title or "",
                         description or "",
+                        autor or "Solicitante",
                         ticket_type or "",
                         urgency or "",
                         files or "",
@@ -412,3 +433,37 @@ class DatabaseManager:
             legacy_conn.close()
 
         return imported, skipped
+
+    def fetch_chamado_messages(self, chamado_id: int, canal: str) -> list[dict[str, str]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            rows = cursor.execute(
+                """
+                SELECT id, autor, mensagem, arquivo, criado_em
+                FROM chamado_messages
+                WHERE chamado_id = ? AND canal = ?
+                ORDER BY id
+                """,
+                (chamado_id, canal),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def add_chamado_message(
+        self,
+        chamado_id: int,
+        canal: str,
+        autor: str,
+        mensagem: str,
+        arquivo: str,
+    ) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO chamado_messages (chamado_id, canal, autor, mensagem, arquivo)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (chamado_id, canal, autor, mensagem, arquivo),
+            )
+            conn.commit()

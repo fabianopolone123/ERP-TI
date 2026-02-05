@@ -153,6 +153,7 @@ class ERPDesktopApp(tk.Tk):
                 "id",
                 "titulo",
                 "descricao",
+                "autor",
                 "tipo",
                 "urgencia",
                 "arquivo",
@@ -1621,6 +1622,12 @@ class ERPDesktopApp(tk.Tk):
         users.sort(key=lambda user: user["nome"].lower())
         return users
 
+    def _is_current_user_in_ti_group(self) -> bool:
+        current_name = self.current_user.get().strip().lower()
+        if not current_name:
+            return False
+        return any(user["nome"].strip().lower() == current_name for user in self._get_ti_group_users())
+
     def _resolve_chamado_status(self, chamado: dict[str, str]) -> str:
         raw_status = str(chamado.get("status", "pendente")).strip().lower()
         if raw_status in self.chamado_lists:
@@ -1650,6 +1657,7 @@ class ERPDesktopApp(tk.Tk):
                 "id",
                 "titulo",
                 "descricao",
+                "autor",
                 "tipo",
                 "urgencia",
                 "arquivo",
@@ -1670,6 +1678,7 @@ class ERPDesktopApp(tk.Tk):
         tipo = chamado_row.get("tipo", "").strip()
         urgencia = chamado_row.get("urgencia", "").strip()
         arquivo = chamado_row.get("arquivo", "").strip()
+        autor = self.current_user.get().strip() or "Administrador"
         if not titulo or not descricao or not tipo or not urgencia:
             messagebox.showwarning(
                 "Campos obrigatorios",
@@ -1677,12 +1686,21 @@ class ERPDesktopApp(tk.Tk):
             )
             return False
 
-        new_id = self.db.insert_chamado(titulo, descricao, tipo, urgencia, arquivo, "pendente")
+        new_id = self.db.insert_chamado(
+            titulo,
+            descricao,
+            autor,
+            tipo,
+            urgencia,
+            arquivo,
+            "pendente",
+        )
         self.chamado_data.append(
             {
                 "id": new_id,
                 "titulo": titulo,
                 "descricao": descricao,
+                "autor": autor,
                 "tipo": tipo,
                 "urgencia": urgencia,
                 "arquivo": arquivo,
@@ -1869,8 +1887,8 @@ class ERPDesktopApp(tk.Tk):
 
         dialog = tk.Toplevel(self)
         dialog.title(f"Detalhes do chamado #{chamado_id}")
-        width = 680
-        height = 520
+        width = 980
+        height = 720
         dialog.geometry(f"{width}x{height}")
         dialog.configure(bg="#0A1B2A")
         dialog.transient(self)
@@ -1885,13 +1903,15 @@ class ERPDesktopApp(tk.Tk):
         pos_y = parent_y + (parent_h - height) // 2
         dialog.geometry(f"{width}x{height}+{max(pos_x, 0)}+{max(pos_y, 0)}")
 
-        frame = ttk.Frame(dialog, style="Card.TFrame", padding=18)
-        frame.pack(fill="both", expand=True, padx=12, pady=12)
+        frame = ttk.Frame(dialog, style="Card.TFrame", padding=14)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(6, weight=1)
+        frame.rowconfigure(7, weight=1)
 
         details = [
             ("Titulo", chamado.get("titulo", "")),
+            ("Autor", chamado.get("autor", "") or "-"),
             ("Status", chamado.get("status", "")),
             ("Tipo", chamado.get("tipo", "")),
             ("Urgencia", chamado.get("urgencia", "")),
@@ -1899,17 +1919,18 @@ class ERPDesktopApp(tk.Tk):
         ]
         for row, (label, value) in enumerate(details):
             ttk.Label(frame, text=label, style="Sub.TLabel").grid(
-                row=row, column=0, sticky="nw", padx=(0, 10), pady=(0, 8)
+                row=row, column=0, sticky="nw", padx=(0, 10), pady=(0, 6)
             )
-            ttk.Label(frame, text=value or "-", style="Sub.TLabel", wraplength=470).grid(
-                row=row, column=1, sticky="nw", pady=(0, 8)
+            ttk.Label(frame, text=value or "-", style="Sub.TLabel", wraplength=700).grid(
+                row=row, column=1, sticky="nw", pady=(0, 6)
             )
 
         ttk.Label(frame, text="Descricao", style="Sub.TLabel").grid(
-            row=5, column=0, sticky="nw", padx=(0, 10), pady=(0, 8)
+            row=6, column=0, sticky="nw", padx=(0, 10), pady=(2, 6)
         )
         desc = tk.Text(
             frame,
+            height=5,
             wrap="word",
             bg="#0D2336",
             fg="#EAF3F9",
@@ -1917,9 +1938,154 @@ class ERPDesktopApp(tk.Tk):
             relief="flat",
             highlightthickness=0,
         )
-        desc.grid(row=5, column=1, sticky="nsew", pady=(0, 8))
+        desc.grid(row=6, column=1, sticky="nsew", pady=(2, 6))
         desc.insert("1.0", chamado.get("descricao", ""))
         desc.configure(state="disabled")
+
+        chats = ttk.Frame(frame, style="Card.TFrame")
+        chats.grid(row=7, column=0, columnspan=2, sticky="nsew", pady=(6, 0))
+        chats.columnconfigure(0, weight=1)
+        chats.columnconfigure(1, weight=1)
+        chats.rowconfigure(1, weight=1)
+
+        current_author = self.current_user.get().strip() or "Administrador"
+
+        # Chat publico (solicitante e TI veem)
+        ttk.Label(chats, text="Chat publico", style="PanelTitle.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        public_text = tk.Text(
+            chats,
+            wrap="word",
+            bg="#0D2336",
+            fg="#EAF3F9",
+            font=("Segoe UI", 10),
+            relief="flat",
+            highlightthickness=0,
+        )
+        public_text.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
+        public_text.configure(state="disabled")
+
+        public_input = ttk.Frame(chats, style="Card.TFrame")
+        public_input.grid(row=2, column=0, sticky="ew", padx=(0, 8), pady=(6, 0))
+        public_input.columnconfigure(0, weight=1)
+        public_message_var = tk.StringVar()
+        public_file_var = tk.StringVar()
+        ttk.Entry(public_input, textvariable=public_message_var, font=("Segoe UI", 10)).grid(
+            row=0, column=0, sticky="ew"
+        )
+        ttk.Entry(public_input, textvariable=public_file_var, font=("Segoe UI", 10)).grid(
+            row=1, column=0, sticky="ew", pady=(4, 0)
+        )
+
+        def pick_public_file() -> None:
+            path = filedialog.askopenfilename(title="Anexar arquivo (chat publico)")
+            if path:
+                public_file_var.set(path)
+
+        ttk.Button(public_input, text="Anexar", style="Action.TButton", command=pick_public_file).grid(
+            row=1, column=1, padx=(6, 0), pady=(4, 0)
+        )
+
+        # Chat interno TI (apenas TI)
+        ttk.Label(chats, text="Chat interno TI", style="PanelTitle.TLabel").grid(
+            row=0, column=1, sticky="w", pady=(0, 6)
+        )
+        interno_text = tk.Text(
+            chats,
+            wrap="word",
+            bg="#0D2336",
+            fg="#EAF3F9",
+            font=("Segoe UI", 10),
+            relief="flat",
+            highlightthickness=0,
+        )
+        interno_text.grid(row=1, column=1, sticky="nsew")
+        interno_text.configure(state="disabled")
+
+        interno_input = ttk.Frame(chats, style="Card.TFrame")
+        interno_input.grid(row=2, column=1, sticky="ew", pady=(6, 0))
+        interno_input.columnconfigure(0, weight=1)
+        interno_message_var = tk.StringVar()
+        interno_file_var = tk.StringVar()
+        ttk.Entry(interno_input, textvariable=interno_message_var, font=("Segoe UI", 10)).grid(
+            row=0, column=0, sticky="ew"
+        )
+        ttk.Entry(interno_input, textvariable=interno_file_var, font=("Segoe UI", 10)).grid(
+            row=1, column=0, sticky="ew", pady=(4, 0)
+        )
+
+        def pick_interno_file() -> None:
+            path = filedialog.askopenfilename(title="Anexar arquivo (chat interno)")
+            if path:
+                interno_file_var.set(path)
+
+        ttk.Button(interno_input, text="Anexar", style="Action.TButton", command=pick_interno_file).grid(
+            row=1, column=1, padx=(6, 0), pady=(4, 0)
+        )
+
+        is_ti_user = self._is_current_user_in_ti_group()
+        if not is_ti_user:
+            interno_input.grid_remove()
+            interno_text.configure(state="normal")
+            interno_text.insert("1.0", "Apenas usuarios do grupo TI visualizam o chat interno.\n")
+            interno_text.configure(state="disabled")
+
+        def load_messages() -> None:
+            public_msgs = self.db.fetch_chamado_messages(chamado_id, "publico")
+            interno_msgs = self.db.fetch_chamado_messages(chamado_id, "interno")
+
+            public_text.configure(state="normal")
+            public_text.delete("1.0", tk.END)
+            for msg in public_msgs:
+                line = f"[{msg['criado_em']}] {msg['autor']}: {msg['mensagem']}\n"
+                public_text.insert(tk.END, line)
+                if msg.get("arquivo"):
+                    public_text.insert(tk.END, f"  anexo: {msg['arquivo']}\n")
+            public_text.configure(state="disabled")
+
+            interno_text.configure(state="normal")
+            if is_ti_user:
+                interno_text.delete("1.0", tk.END)
+                for msg in interno_msgs:
+                    line = f"[{msg['criado_em']}] {msg['autor']}: {msg['mensagem']}\n"
+                    interno_text.insert(tk.END, line)
+                    if msg.get("arquivo"):
+                        interno_text.insert(tk.END, f"  anexo: {msg['arquivo']}\n")
+            interno_text.configure(state="disabled")
+
+        def send_public() -> None:
+            message = public_message_var.get().strip()
+            file_path = public_file_var.get().strip()
+            if not message:
+                messagebox.showwarning("Campo obrigatorio", "Digite a mensagem no chat publico.")
+                return
+            self.db.add_chamado_message(chamado_id, "publico", current_author, message, file_path)
+            public_message_var.set("")
+            public_file_var.set("")
+            load_messages()
+
+        def send_interno() -> None:
+            if not is_ti_user:
+                return
+            message = interno_message_var.get().strip()
+            file_path = interno_file_var.get().strip()
+            if not message:
+                messagebox.showwarning("Campo obrigatorio", "Digite a mensagem no chat interno.")
+                return
+            self.db.add_chamado_message(chamado_id, "interno", current_author, message, file_path)
+            interno_message_var.set("")
+            interno_file_var.set("")
+            load_messages()
+
+        ttk.Button(public_input, text="Enviar", style="Action.TButton", command=send_public).grid(
+            row=0, column=1, padx=(6, 0)
+        )
+        ttk.Button(interno_input, text="Enviar", style="Action.TButton", command=send_interno).grid(
+            row=0, column=1, padx=(6, 0)
+        )
+
+        load_messages()
 
     def _move_chamado_to_status(self, chamado_id: int, target_status: str) -> None:
         for chamado in self.chamado_data:
