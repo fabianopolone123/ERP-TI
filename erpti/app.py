@@ -89,6 +89,7 @@ class ERPDesktopApp(tk.Tk):
             "users",
             ("id", "departamento", "nome", "perfil", "telefone", "ramal", "email"),
         )
+        self._sync_user_group_labels()
         self.equipment_data = self.db.fetch_rows(
             "equipments",
             (
@@ -161,6 +162,11 @@ class ERPDesktopApp(tk.Tk):
             ),
         )
         self.access_folders = self.db.fetch_access_folders()
+
+    def _sync_user_group_labels(self) -> None:
+        group_map = self.db.fetch_user_group_map()
+        for user in self.users_data:
+            user["perfil"] = group_map.get(int(user["id"]), "")
 
     def _configure_styles(self) -> None:
         self.style.configure("Card.TFrame", background="#11273B")
@@ -461,7 +467,6 @@ class ERPDesktopApp(tk.Tk):
                 [
                     ("Departamento", "departamento"),
                     ("Nome completo", "nome"),
-                    ("Perfil", "perfil"),
                 ],
                 self._register_user,
             ),
@@ -478,11 +483,47 @@ class ERPDesktopApp(tk.Tk):
         self.users_table = ttk.Treeview(tab, columns=columns, show="headings", height=12)
         self.users_table.heading("departamento", text="Departamento")
         self.users_table.heading("nome", text="Nome completo")
-        self.users_table.heading("perfil", text="Perfil")
+        self.users_table.heading("perfil", text="Grupos")
         self.users_table.column("departamento", width=180)
         self.users_table.column("nome", width=320)
-        self.users_table.column("perfil", width=180)
+        self.users_table.column("perfil", width=260)
         self.users_table.grid(row=3, column=0, sticky="nsew", pady=(18, 0))
+        self._refresh_users_table()
+
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(3, weight=1)
+
+    def _register_user(self, new_user: dict[str, str]) -> bool:
+        if not new_user.get("departamento") or not new_user.get("nome"):
+            messagebox.showwarning(
+                "Campos obrigatorios",
+                "Preencha departamento e nome completo.",
+            )
+            return False
+
+        # Mantem compatibilidade com o schema atual do banco.
+        user_to_save = {
+            "departamento": new_user["departamento"],
+            "nome": new_user["nome"],
+            "perfil": "",
+            "telefone": "",
+            "ramal": "",
+            "email": "",
+        }
+
+        self.db.insert_row("users", user_to_save)
+        self.users_data = self.db.fetch_rows(
+            "users",
+            ("id", "departamento", "nome", "perfil", "telefone", "ramal", "email"),
+        )
+        self._sync_user_group_labels()
+        self._refresh_users_table()
+        return True
+
+    def _refresh_users_table(self) -> None:
+        if not hasattr(self, "users_table"):
+            return
+        self.users_table.delete(*self.users_table.get_children())
         for user in self.users_data:
             self.users_table.insert(
                 "",
@@ -493,40 +534,6 @@ class ERPDesktopApp(tk.Tk):
                     user.get("perfil", ""),
                 ),
             )
-
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(3, weight=1)
-
-    def _register_user(self, new_user: dict[str, str]) -> bool:
-        if not new_user.get("departamento") or not new_user.get("nome") or not new_user.get("perfil"):
-            messagebox.showwarning(
-                "Campos obrigatorios",
-                "Preencha departamento, nome completo e perfil.",
-            )
-            return False
-
-        # Mantem compatibilidade com o schema atual do banco.
-        user_to_save = {
-            "departamento": new_user["departamento"],
-            "nome": new_user["nome"],
-            "perfil": new_user["perfil"],
-            "telefone": "",
-            "ramal": "",
-            "email": "",
-        }
-
-        self.db.insert_row("users", user_to_save)
-        self.users_data.append(user_to_save)
-        self.users_table.insert(
-            "",
-            "end",
-            values=(
-                user_to_save["departamento"],
-                user_to_save["nome"],
-                user_to_save["perfil"],
-            ),
-        )
-        return True
 
     def _open_user_groups_dialog(self) -> None:
         dialog = tk.Toplevel(self)
@@ -682,6 +689,8 @@ class ERPDesktopApp(tk.Tk):
                 messagebox.showwarning("Ja vinculado", "Usuario ja esta neste grupo.")
                 return
             refresh_members()
+            self._sync_user_group_labels()
+            self._refresh_users_table()
 
         ttk.Button(left, text="Cadastrar grupo", style="Action.TButton", command=add_group).grid(
             row=3, column=0, sticky="ew", pady=(8, 0)

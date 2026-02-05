@@ -302,6 +302,21 @@ class DatabaseManager:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def fetch_user_group_map(self) -> dict[int, str]:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            rows = cursor.execute(
+                """
+                SELECT
+                    m.user_id,
+                    GROUP_CONCAT(g.nome, ', ')
+                FROM user_group_members m
+                JOIN user_groups g ON g.id = m.group_id
+                GROUP BY m.user_id
+                """
+            ).fetchall()
+            return {int(user_id): groups for user_id, groups in rows}
+
     def insert_chamado(
         self,
         titulo: str,
