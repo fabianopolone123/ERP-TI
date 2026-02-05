@@ -481,13 +481,35 @@ class ERPDesktopApp(tk.Tk):
 
         columns = ("departamento", "nome", "perfil")
         self.users_table = ttk.Treeview(tab, columns=columns, show="headings", height=12)
-        self.users_table.heading("departamento", text="Departamento")
-        self.users_table.heading("nome", text="Nome completo")
-        self.users_table.heading("perfil", text="Grupos")
+        self._users_sort_reverse = {column: False for column in columns}
+        self.users_table.heading(
+            "departamento",
+            text="Departamento",
+            command=lambda: self._sort_users_table("departamento"),
+        )
+        self.users_table.heading(
+            "nome",
+            text="Nome completo",
+            command=lambda: self._sort_users_table("nome"),
+        )
+        self.users_table.heading(
+            "perfil",
+            text="Grupos",
+            command=lambda: self._sort_users_table("perfil"),
+        )
         self.users_table.column("departamento", width=180)
         self.users_table.column("nome", width=320)
         self.users_table.column("perfil", width=260)
-        self.users_table.grid(row=3, column=0, sticky="nsew", pady=(18, 0))
+
+        users_table_frame = ttk.Frame(tab, style="Card.TFrame")
+        users_table_frame.grid(row=3, column=0, sticky="nsew", pady=(18, 0))
+        users_table_frame.columnconfigure(0, weight=1)
+        users_table_frame.rowconfigure(0, weight=1)
+        self.users_table.grid(row=0, column=0, sticky="nsew")
+
+        users_scroll = ttk.Scrollbar(users_table_frame, orient="vertical", command=self.users_table.yview)
+        users_scroll.grid(row=0, column=1, sticky="ns")
+        self.users_table.configure(yscrollcommand=users_scroll.set)
         self._refresh_users_table()
 
         tab.columnconfigure(0, weight=1)
@@ -534,6 +556,19 @@ class ERPDesktopApp(tk.Tk):
                     user.get("perfil", ""),
                 ),
             )
+
+    def _sort_users_table(self, column: str) -> None:
+        if not hasattr(self, "users_table"):
+            return
+        rows = [
+            (self.users_table.set(item_id, column).lower(), item_id)
+            for item_id in self.users_table.get_children("")
+        ]
+        reverse = self._users_sort_reverse.get(column, False)
+        rows.sort(reverse=reverse)
+        for index, (_value, item_id) in enumerate(rows):
+            self.users_table.move(item_id, "", index)
+        self._users_sort_reverse[column] = not reverse
 
     def _open_user_groups_dialog(self) -> None:
         dialog = tk.Toplevel(self)
