@@ -25,7 +25,8 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+*.db.enc
+*.plain.bak
 
 # Local/project files not for versioning
 *.pdf
-
