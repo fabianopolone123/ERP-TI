@@ -2029,11 +2029,27 @@ class ERPDesktopApp(tk.Tk):
             messagebox.showinfo("Chamado fechado", f"Chamado #{chamado_id} finalizado.")
             dialog.destroy()
 
+        def reopen_chamado() -> None:
+            closed_statuses = {"fechado", "finalizado", "resolved"}
+            if str(chamado.get("status", "")).strip().lower() not in closed_statuses:
+                return
+            chamado["status"] = "pendente"
+            chamado["responsavel"] = ""
+            self.db.update_chamado_flow(chamado_id, "pendente", "")
+            self._refresh_chamado_board()
+            messagebox.showinfo("Chamado reaberto", f"Chamado #{chamado_id} voltou para pendentes.")
+            dialog.destroy()
+
+        closed_statuses = {"fechado", "finalizado", "resolved"}
+        is_closed = str(chamado.get("status", "")).strip().lower() in closed_statuses
+        action_text = "Reabrir chamado" if is_closed else "Fechar chamado"
+        action_command = reopen_chamado if is_closed else close_chamado
+
         ttk.Button(
             frame,
-            text="Fechar chamado",
+            text=action_text,
             style="Logout.TButton",
-            command=close_chamado,
+            command=action_command,
         ).grid(row=0, column=2, sticky="e", padx=(10, 0))
 
         ttk.Label(frame, text="Descricao", style="Sub.TLabel").grid(
@@ -2225,6 +2241,15 @@ class ERPDesktopApp(tk.Tk):
         dialog.configure(bg="#0A1B2A")
         dialog.transient(self)
         dialog.grab_set()
+        dialog.update_idletasks()
+
+        parent_x = self.winfo_rootx()
+        parent_y = self.winfo_rooty()
+        parent_w = self.winfo_width()
+        parent_h = self.winfo_height()
+        pos_x = parent_x + (parent_w - width) // 2
+        pos_y = parent_y + (parent_h - height) // 2
+        dialog.geometry(f"{width}x{height}+{max(pos_x, 0)}+{max(pos_y, 0)}")
 
         frame = ttk.Frame(dialog, style="Card.TFrame", padding=14)
         frame.pack(fill="both", expand=True, padx=10, pady=10)
