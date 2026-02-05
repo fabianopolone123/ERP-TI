@@ -1615,17 +1615,11 @@ class ERPDesktopApp(tk.Tk):
             style="Logout.TButton",
             command=self._open_closed_chamados_window,
         ).grid(row=0, column=1, sticky="w", padx=(8, 0))
-        ttk.Button(
-            actions,
-            text="Fechar selecionado",
-            style="Logout.TButton",
-            command=self._finalize_selected_chamado,
-        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
         board = ttk.Frame(tab, style="Card.TFrame")
         board.grid(row=3, column=0, sticky="nsew")
         ti_users = self._get_ti_group_users()
-        columns = [("aberto", "Chamados abertos")] + [
+        columns = [("pendente", "Chamados pendentes")] + [
             (f"user_{user['id']}", user["nome"]) for user in ti_users
         ]
         for idx in range(len(columns)):
@@ -1694,7 +1688,7 @@ class ERPDesktopApp(tk.Tk):
             if not status:
                 continue
             if status not in self.chamado_lists:
-                status = "aberto"
+                status = "pendente"
             item_label = f"{chamado['id']} - [{chamado.get('urgencia', '')}] {chamado['titulo']}"
             self.chamado_lists[status].insert(tk.END, item_label)
 
@@ -1714,24 +1708,24 @@ class ERPDesktopApp(tk.Tk):
         return any(user["nome"].strip().lower() == current_name for user in self._get_ti_group_users())
 
     def _resolve_chamado_column(self, chamado: dict[str, str]) -> str | None:
-        raw_status = str(chamado.get("status", "aberto")).strip().lower()
+        raw_status = str(chamado.get("status", "pendente")).strip().lower()
         responsavel = str(chamado.get("responsavel", "")).strip().lower()
 
         if raw_status in {"fechado", "resolved", "finalizado"}:
             return None
         if raw_status in {"aberto", "new", "awaiting", "pendente"}:
-            return "aberto"
+            return "pendente"
         if raw_status in self.chamado_lists:
             return raw_status
 
         if raw_status in {"em_atendimento", "in_progress"}:
             mapped = self._chamado_assignee_lookup.get(responsavel)
-            return mapped or "aberto"
+            return mapped or "pendente"
 
         mapped_by_status = self._chamado_assignee_lookup.get(raw_status)
         if mapped_by_status:
             return mapped_by_status
-        return "aberto"
+        return "pendente"
 
     def _import_legacy_chamados(self) -> None:
         default_path = "dbchamados antigos.sqlite3"
@@ -1790,7 +1784,7 @@ class ERPDesktopApp(tk.Tk):
             tipo,
             urgencia,
             arquivo,
-            "aberto",
+            "pendente",
             "",
         )
         self.chamado_data.append(
@@ -1803,7 +1797,7 @@ class ERPDesktopApp(tk.Tk):
                 "urgencia": urgencia,
                 "arquivo": arquivo,
                 "responsavel": "",
-                "status": "aberto",
+                "status": "pendente",
             }
         )
         self._refresh_chamado_board()
@@ -2025,6 +2019,23 @@ class ERPDesktopApp(tk.Tk):
                 row=row, column=1, sticky="nw", pady=(0, 6)
             )
 
+        def close_chamado() -> None:
+            if str(chamado.get("status", "")).strip().lower() == "fechado":
+                return
+            chamado["status"] = "fechado"
+            current_responsavel = chamado.get("responsavel", "")
+            self.db.update_chamado_flow(chamado_id, "fechado", current_responsavel)
+            self._refresh_chamado_board()
+            messagebox.showinfo("Chamado fechado", f"Chamado #{chamado_id} finalizado.")
+            dialog.destroy()
+
+        ttk.Button(
+            frame,
+            text="Fechar chamado",
+            style="Logout.TButton",
+            command=close_chamado,
+        ).grid(row=0, column=2, sticky="e", padx=(10, 0))
+
         ttk.Label(frame, text="Descricao", style="Sub.TLabel").grid(
             row=6, column=0, sticky="nw", padx=(0, 10), pady=(2, 6)
         )
@@ -2188,13 +2199,13 @@ class ERPDesktopApp(tk.Tk):
         load_messages()
 
     def _move_chamado_to_status(self, chamado_id: int, target_status: str) -> None:
-        new_status = "aberto"
+        new_status = "pendente"
         new_responsavel = ""
         if target_status.startswith("user_"):
             new_status = "em_atendimento"
             new_responsavel = self._chamado_status_to_name.get(target_status, "")
-        elif target_status == "aberto":
-            new_status = "aberto"
+        elif target_status == "pendente":
+            new_status = "pendente"
             new_responsavel = ""
 
         for chamado in self.chamado_data:
@@ -2204,20 +2215,6 @@ class ERPDesktopApp(tk.Tk):
                 break
         self.db.update_chamado_flow(chamado_id, new_status, new_responsavel)
         self._refresh_chamado_board()
-
-    def _finalize_selected_chamado(self) -> None:
-        if not self._chamado_selected_id:
-            messagebox.showwarning("Selecao obrigatoria", "Selecione um chamado para finalizar.")
-            return
-        current_responsavel = ""
-        for chamado in self.chamado_data:
-            if int(chamado["id"]) == int(self._chamado_selected_id):
-                chamado["status"] = "fechado"
-                current_responsavel = chamado.get("responsavel", "")
-                break
-        self.db.update_chamado_flow(self._chamado_selected_id, "fechado", current_responsavel)
-        self._refresh_chamado_board()
-        self._chamado_selected_id = None
 
     def _open_closed_chamados_window(self) -> None:
         dialog = tk.Toplevel(self)

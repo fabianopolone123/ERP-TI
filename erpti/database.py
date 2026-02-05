@@ -466,7 +466,7 @@ class DatabaseManager:
                     skipped += 1
                     continue
 
-                mapped_status = "aberto"
+                mapped_status = "pendente"
                 mapped_responsavel = ""
                 old_status = (old_status or "").strip().lower()
                 if old_status in {"resolved", "fechado", "finalizado"}:
