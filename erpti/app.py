@@ -1541,20 +1541,21 @@ class ERPDesktopApp(tk.Tk):
 
         board = ttk.Frame(tab, style="Card.TFrame")
         board.grid(row=3, column=0, sticky="nsew")
-        for idx in range(4):
+        ti_users = self._get_ti_group_users()
+        columns = [("pendente", "Chamados pendentes")] + [
+            (f"user_{user['id']}", user["nome"]) for user in ti_users
+        ]
+        for idx in range(len(columns)):
             board.columnconfigure(idx, weight=1)
         board.rowconfigure(0, weight=1)
 
-        columns = [
-            ("pendente", "Chamados pendentes"),
-            ("fabiano", "Fabiano"),
-            ("marcelo", "Marcelo"),
-            ("fabio", "Fabio"),
-        ]
         self.chamado_lists = {}
         self._chamado_list_to_status = {}
         self._chamado_selected_id = None
         self._chamado_drag = None
+        self._chamado_assignee_lookup = {
+            user["nome"].strip().lower(): f"user_{user['id']}" for user in ti_users
+        }
 
         for col_index, (status_key, title) in enumerate(columns):
             column_frame = ttk.Frame(board, style="Card.TFrame", padding=8)
@@ -1605,11 +1606,29 @@ class ERPDesktopApp(tk.Tk):
             listbox.delete(0, tk.END)
 
         for chamado in self.chamado_data:
-            status = str(chamado.get("status", "pendente")).lower()
+            status = self._resolve_chamado_status(chamado)
             if status not in self.chamado_lists:
-                continue
+                status = "pendente"
             item_label = f"{chamado['id']} - [{chamado.get('urgencia', '')}] {chamado['titulo']}"
             self.chamado_lists[status].insert(tk.END, item_label)
+
+    def _get_ti_group_users(self) -> list[dict[str, str]]:
+        groups = self.db.fetch_user_groups()
+        ti_group = next((group for group in groups if group["nome"].strip().lower() == "ti"), None)
+        if not ti_group:
+            return []
+        users = self.db.fetch_group_members(int(ti_group["id"]))
+        users.sort(key=lambda user: user["nome"].lower())
+        return users
+
+    def _resolve_chamado_status(self, chamado: dict[str, str]) -> str:
+        raw_status = str(chamado.get("status", "pendente")).strip().lower()
+        if raw_status in self.chamado_lists:
+            return raw_status
+        mapped = self._chamado_assignee_lookup.get(raw_status)
+        if mapped and mapped in self.chamado_lists:
+            return mapped
+        return "pendente"
 
     def _import_legacy_chamados(self) -> None:
         default_path = "dbchamados antigos.sqlite3"
