@@ -2026,7 +2026,7 @@ class ERPDesktopApp(tk.Tk):
         current_author = self.current_user.get().strip() or "Administrador"
 
         # Chat publico (solicitante e TI veem)
-        ttk.Label(chats, text="Chat publico", style="PanelTitle.TLabel").grid(
+        ttk.Label(chats, text="Publico", style="PanelTitle.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 6)
         )
         public_text = tk.Text(
