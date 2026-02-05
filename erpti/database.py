@@ -36,6 +36,26 @@ class DatabaseManager:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS user_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nome TEXT NOT NULL UNIQUE
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_group_members (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    UNIQUE(group_id, user_id),
+                    FOREIGN KEY(group_id) REFERENCES user_groups(id),
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                )
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS equipments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     id_interno TEXT NOT NULL,
@@ -225,6 +245,62 @@ class DatabaseManager:
                 folder_names,
             )
             conn.commit()
+
+    def fetch_user_groups(self) -> list[dict[str, str]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            rows = cursor.execute("SELECT id, nome FROM user_groups ORDER BY LOWER(nome)").fetchall()
+            return [dict(row) for row in rows]
+
+    def add_user_group(self, nome: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            exists = cursor.execute(
+                "SELECT 1 FROM user_groups WHERE LOWER(nome)=LOWER(?) LIMIT 1",
+                (nome,),
+            ).fetchone()
+            if exists:
+                return False
+            cursor.execute("INSERT INTO user_groups (nome) VALUES (?)", (nome,))
+            conn.commit()
+            return True
+
+    def assign_user_to_group(self, group_id: int, user_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            exists = cursor.execute(
+                """
+                SELECT 1 FROM user_group_members
+                WHERE group_id = ? AND user_id = ?
+                LIMIT 1
+                """,
+                (group_id, user_id),
+            ).fetchone()
+            if exists:
+                return False
+            cursor.execute(
+                "INSERT INTO user_group_members (group_id, user_id) VALUES (?, ?)",
+                (group_id, user_id),
+            )
+            conn.commit()
+            return True
+
+    def fetch_group_members(self, group_id: int) -> list[dict[str, str]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            rows = cursor.execute(
+                """
+                SELECT u.id, u.nome, u.departamento, u.perfil
+                FROM user_group_members m
+                JOIN users u ON u.id = m.user_id
+                WHERE m.group_id = ?
+                ORDER BY u.nome
+                """,
+                (group_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def insert_chamado(
         self,

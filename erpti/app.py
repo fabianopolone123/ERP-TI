@@ -87,7 +87,7 @@ class ERPDesktopApp(tk.Tk):
     def _load_data_from_db(self) -> None:
         self.users_data = self.db.fetch_rows(
             "users",
-            ("departamento", "nome", "perfil", "telefone", "ramal", "email"),
+            ("id", "departamento", "nome", "perfil", "telefone", "ramal", "email"),
         )
         self.equipment_data = self.db.fetch_rows(
             "equipments",
@@ -467,6 +467,12 @@ class ERPDesktopApp(tk.Tk):
             ),
             style="Action.TButton",
         ).grid(row=2, column=0, sticky="w")
+        ttk.Button(
+            tab,
+            text="Grupos",
+            command=self._open_user_groups_dialog,
+            style="Action.TButton",
+        ).grid(row=2, column=0, sticky="e")
 
         columns = ("departamento", "nome", "perfil")
         self.users_table = ttk.Treeview(tab, columns=columns, show="headings", height=12)
@@ -521,6 +527,175 @@ class ERPDesktopApp(tk.Tk):
             ),
         )
         return True
+
+    def _open_user_groups_dialog(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Grupos de usuarios")
+        width = 860
+        height = 560
+        dialog.geometry(f"{width}x{height}")
+        dialog.configure(bg="#0A1B2A")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.update_idletasks()
+
+        parent_x = self.winfo_rootx()
+        parent_y = self.winfo_rooty()
+        parent_w = self.winfo_width()
+        parent_h = self.winfo_height()
+        pos_x = parent_x + (parent_w - width) // 2
+        pos_y = parent_y + (parent_h - height) // 2
+        dialog.geometry(f"{width}x{height}+{max(pos_x, 0)}+{max(pos_y, 0)}")
+
+        root = ttk.Frame(dialog, style="Card.TFrame", padding=14)
+        root.pack(fill="both", expand=True, padx=12, pady=12)
+        root.columnconfigure(0, weight=1)
+        root.columnconfigure(1, weight=1)
+        root.rowconfigure(1, weight=1)
+
+        left = ttk.Frame(root, style="Card.TFrame", padding=8)
+        left.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(0, 8))
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(2, weight=1)
+
+        ttk.Label(left, text="Novo grupo", style="Sub.TLabel").grid(row=0, column=0, sticky="w")
+        group_name_var = tk.StringVar()
+        ttk.Entry(left, textvariable=group_name_var, font=("Segoe UI", 11)).grid(
+            row=1, column=0, sticky="ew", pady=(4, 8)
+        )
+
+        groups_list = tk.Listbox(
+            left,
+            selectmode="browse",
+            bg="#0D2336",
+            fg="#EAF3F9",
+            selectbackground="#227D74",
+            selectforeground="#FFFFFF",
+            font=("Segoe UI", 10),
+            activestyle="none",
+            highlightthickness=0,
+            relief="flat",
+        )
+        groups_list.grid(row=2, column=0, sticky="nsew")
+
+        right = ttk.Frame(root, style="Card.TFrame", padding=8)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+
+        ttk.Label(right, text="Usuario", style="Sub.TLabel").grid(row=0, column=0, sticky="w")
+        user_combo_var = tk.StringVar()
+        user_combo = ttk.Combobox(right, textvariable=user_combo_var, state="readonly")
+        user_combo.grid(row=1, column=0, sticky="ew", pady=(4, 8))
+
+        members_frame = ttk.Frame(root, style="Card.TFrame", padding=8)
+        members_frame.grid(row=1, column=1, sticky="nsew")
+        members_frame.columnconfigure(0, weight=1)
+        members_frame.rowconfigure(1, weight=1)
+        ttk.Label(members_frame, text="Membros do grupo", style="Sub.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        members_list = tk.Listbox(
+            members_frame,
+            selectmode="browse",
+            bg="#0D2336",
+            fg="#EAF3F9",
+            selectbackground="#227D74",
+            selectforeground="#FFFFFF",
+            font=("Segoe UI", 10),
+            activestyle="none",
+            highlightthickness=0,
+            relief="flat",
+        )
+        members_list.grid(row=1, column=0, sticky="nsew")
+
+        state = {
+            "groups": [],
+            "users": [],
+            "selected_group_id": None,
+            "user_map": {},
+        }
+
+        def refresh_groups() -> None:
+            groups = self.db.fetch_user_groups()
+            state["groups"] = groups
+            groups_list.delete(0, tk.END)
+            for item in groups:
+                groups_list.insert(tk.END, item["nome"])
+
+        def refresh_users() -> None:
+            users = self.db.fetch_rows("users", ("id", "departamento", "nome", "perfil"))
+            state["users"] = users
+            display = []
+            user_map = {}
+            for item in users:
+                label = f"{item['nome']} ({item['departamento']})"
+                display.append(label)
+                user_map[label] = int(item["id"])
+            state["user_map"] = user_map
+            user_combo["values"] = display
+            if display:
+                user_combo.current(0)
+
+        def refresh_members() -> None:
+            members_list.delete(0, tk.END)
+            group_id = state["selected_group_id"]
+            if not group_id:
+                return
+            for member in self.db.fetch_group_members(group_id):
+                members_list.insert(
+                    tk.END,
+                    f"{member['nome']} - {member['departamento']} ({member.get('perfil', '')})",
+                )
+
+        def add_group() -> None:
+            group_name = group_name_var.get().strip()
+            if not group_name:
+                messagebox.showwarning("Campo obrigatorio", "Informe o nome do grupo.")
+                return
+            if not self.db.add_user_group(group_name):
+                messagebox.showwarning("Grupo existente", "Este grupo ja foi cadastrado.")
+                return
+            group_name_var.set("")
+            refresh_groups()
+
+        def select_group(_event=None) -> None:
+            idx = groups_list.curselection()
+            if not idx:
+                state["selected_group_id"] = None
+                refresh_members()
+                return
+            selected = state["groups"][idx[0]]
+            state["selected_group_id"] = int(selected["id"])
+            refresh_members()
+
+        def add_user_to_group() -> None:
+            group_id = state["selected_group_id"]
+            if not group_id:
+                messagebox.showwarning("Selecao obrigatoria", "Selecione um grupo.")
+                return
+            user_label = user_combo_var.get().strip()
+            user_id = state["user_map"].get(user_label)
+            if not user_id:
+                messagebox.showwarning("Selecao obrigatoria", "Selecione um usuario.")
+                return
+            if not self.db.assign_user_to_group(group_id, user_id):
+                messagebox.showwarning("Ja vinculado", "Usuario ja esta neste grupo.")
+                return
+            refresh_members()
+
+        ttk.Button(left, text="Cadastrar grupo", style="Action.TButton", command=add_group).grid(
+            row=3, column=0, sticky="ew", pady=(8, 0)
+        )
+        ttk.Button(
+            right,
+            text="Vincular usuario ao grupo",
+            style="Action.TButton",
+            command=add_user_to_group,
+        ).grid(row=2, column=0, sticky="w")
+
+        groups_list.bind("<<ListboxSelect>>", select_group)
+        refresh_groups()
+        refresh_users()
 
     def _build_access_module(self, tab: ttk.Frame, module_name: str, description: str) -> None:
         ttk.Label(tab, text=module_name, style="Title.TLabel").grid(row=0, column=0, sticky="w")
