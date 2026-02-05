@@ -1,10 +1,13 @@
-import sqlite3 as std_sqlite3
+import sqlite3
 import hashlib
 import hmac
 import os
-from sqlcipher3 import dbapi2 as sqlite3
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from pathlib import Path
+try:
+    from sqlcipher3 import dbapi2 as sqlcipher3
+except ImportError:
+    sqlcipher3 = None
 
 
 class DatabaseManager:
@@ -13,127 +16,33 @@ class DatabaseManager:
     PASSWORD_ITERATIONS = 200_000
 
     def __init__(self, db_path: str = "erpti.db") -> None:
-        self.source_db_path = Path(db_path)
-        self.db_path = Path(f"{db_path}.enc")
-        self._ensure_encrypted_database()
+        self.db_path = Path(db_path)
+        self._migrate_from_encrypted_if_needed()
 
     def _escape_sql_value(self, value: str) -> str:
         return value.replace("'", "''")
 
-    def _apply_db_key(self, conn) -> None:
-        key = self._escape_sql_value(self.DB_KEY)
-        cursor = conn.cursor()
-        cursor.execute(f"PRAGMA key = '{key}'")
-        cursor.execute("PRAGMA foreign_keys = ON")
-
-    def _connect(self):
-        conn = sqlite3.connect(str(self.db_path))
-        self._apply_db_key(conn)
-        return conn
-
-    def _is_sqlcipher_database(self, db_path: Path) -> bool:
-        if not db_path.exists():
-            return True
-        try:
-            conn = sqlite3.connect(str(db_path))
-            self._apply_db_key(conn)
-            conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
-            conn.close()
-            return True
-        except Exception:
-            return False
-
-    def _is_plain_sqlite_database(self, db_path: Path) -> bool:
-        if not db_path.exists():
-            return False
-        try:
-            with std_sqlite3.connect(str(db_path)) as conn:
-                conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
-            return True
-        except Exception:
-            return False
-
-    def _encrypt_existing_plain_database(self) -> None:
-        source_path = self.source_db_path
-        encrypted_path = self.db_path
-        backup_path = Path(f"{source_path}.plain.bak")
-        temp_path = Path(f"{encrypted_path}.tmp")
-
-        if temp_path.exists():
-            temp_path.unlink()
-        if encrypted_path.exists():
-            encrypted_path.unlink()
-
-        source_conn = None
-        try:
-            source_conn = sqlite3.connect(str(source_path))
-            source_cur = source_conn.cursor()
-            escaped_temp = self._escape_sql_value(str(temp_path))
-            escaped_key = self._escape_sql_value(self.DB_KEY)
-
-            source_cur.execute(f"ATTACH DATABASE '{escaped_temp}' AS encrypted KEY '{escaped_key}'")
-            source_cur.execute("SELECT sqlcipher_export('encrypted')")
-            source_cur.execute("DETACH DATABASE encrypted")
-        finally:
-            if source_conn is not None:
-                source_conn.close()
-
-        verify_conn = None
-        try:
-            verify_conn = sqlite3.connect(str(temp_path))
-            self._apply_db_key(verify_conn)
-            verify_conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
-        finally:
-            if verify_conn is not None:
-                verify_conn.close()
-
-        try:
-            temp_path.replace(encrypted_path)
-            try:
-                if backup_path.exists():
-                    backup_path.unlink()
-                source_path.replace(backup_path)
-            except PermissionError:
-                pass
-        except PermissionError as exc:
-            if temp_path.exists():
-                temp_path.unlink()
+    def _migrate_from_encrypted_if_needed(self) -> None:
+        encrypted_path = Path(f"{self.db_path}.enc")
+        if self.db_path.exists() or not encrypted_path.exists():
+            return
+        if sqlcipher3 is None:
             raise RuntimeError(
-                "Nao foi possivel migrar o banco para criptografado porque o arquivo esta em uso. "
-                "Feche o sistema e tente novamente."
-            ) from exc
+                "Banco criptografado encontrado, mas sqlcipher3 nao esta instalado para migrar."
+            )
 
-    def _ensure_encrypted_database(self) -> None:
-        if self.db_path.exists():
-            if self._is_sqlcipher_database(self.db_path):
-                # Remove legado sem criptografia para evitar abertura acidental no DB Browser.
-                if (
-                    self.source_db_path != self.db_path
-                    and self.source_db_path.exists()
-                    and self._is_plain_sqlite_database(self.source_db_path)
-                ):
-                    try:
-                        self.source_db_path.unlink()
-                    except PermissionError:
-                        pass
-                return
-            raise RuntimeError("Banco criptografado encontrado, mas nao foi possivel abrir com a chave atual.")
-
-        if not self.source_db_path.exists():
-            return
-
-        if self._is_sqlcipher_database(self.source_db_path):
-            self.db_path = self.source_db_path
-            return
-
-        if self._is_plain_sqlite_database(self.source_db_path):
-            self._encrypt_existing_plain_database()
-            return
-
-        raise RuntimeError("Nao foi possivel abrir o banco de dados com SQLCipher.")
+        key = self._escape_sql_value(self.DB_KEY)
+        plain_path = self._escape_sql_value(str(self.db_path))
+        with sqlcipher3.connect(str(encrypted_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA key = '{key}'")
+            cursor.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+            cursor.execute(f"ATTACH DATABASE '{plain_path}' AS plaintext KEY ''")
+            cursor.execute("SELECT sqlcipher_export('plaintext')")
+            cursor.execute("DETACH DATABASE plaintext")
 
     def initialize(self, default_access_folders: list[str]) -> None:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -414,7 +323,7 @@ class DatabaseManager:
             conn.commit()
 
     def fetch_rows(self, table: str, columns: tuple[str, ...]) -> list[dict[str, str]]:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             sql = f"SELECT {', '.join(columns)} FROM {table} ORDER BY id"
@@ -422,7 +331,7 @@ class DatabaseManager:
             return [dict(row) for row in rows]
 
     def fetch_access_folders(self) -> list[str]:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             rows = cursor.execute("SELECT nome FROM access_folders ORDER BY LOWER(nome)").fetchall()
             return [row[0] for row in rows]
@@ -432,14 +341,14 @@ class DatabaseManager:
         placeholders = ", ".join(["?"] * len(columns))
         column_list = ", ".join(columns)
         values = [row[column] for column in columns]
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             sql = f"INSERT INTO {table} ({column_list}) VALUES ({placeholders})"
             cursor.execute(sql, values)
             conn.commit()
 
     def add_access_folder(self, folder_name: str) -> None:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("INSERT INTO access_folders (nome) VALUES (?)", (folder_name,))
             conn.commit()
@@ -448,7 +357,7 @@ class DatabaseManager:
         if not folder_names:
             return
         placeholders = ", ".join(["?"] * len(folder_names))
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 f"DELETE FROM access_folders WHERE nome IN ({placeholders})",
@@ -457,14 +366,14 @@ class DatabaseManager:
             conn.commit()
 
     def fetch_user_groups(self) -> list[dict[str, str]]:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             rows = cursor.execute("SELECT id, nome FROM user_groups ORDER BY LOWER(nome)").fetchall()
             return [dict(row) for row in rows]
 
     def add_user_group(self, nome: str) -> bool:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             exists = cursor.execute(
                 "SELECT 1 FROM user_groups WHERE LOWER(nome)=LOWER(?) LIMIT 1",
@@ -477,7 +386,7 @@ class DatabaseManager:
             return True
 
     def assign_user_to_group(self, group_id: int, user_id: int) -> bool:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             exists = cursor.execute(
                 """
@@ -497,7 +406,7 @@ class DatabaseManager:
             return True
 
     def fetch_group_members(self, group_id: int) -> list[dict[str, str]]:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             rows = cursor.execute(
@@ -513,7 +422,7 @@ class DatabaseManager:
             return [dict(row) for row in rows]
 
     def fetch_user_group_map(self) -> dict[int, str]:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             rows = cursor.execute(
                 """
@@ -529,7 +438,7 @@ class DatabaseManager:
 
     def set_user_credentials(self, user_id: int, username: str, senha: str) -> bool:
         password_hash = self._hash_password(senha)
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             exists = cursor.execute(
                 """
@@ -549,7 +458,7 @@ class DatabaseManager:
             return True
 
     def authenticate_user(self, username: str, senha: str) -> dict[str, str] | None:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             row = cursor.execute(
@@ -593,7 +502,7 @@ class DatabaseManager:
         status: str,
         responsavel: str = "",
     ) -> int:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -606,7 +515,7 @@ class DatabaseManager:
             return int(cursor.lastrowid)
 
     def update_chamado_status(self, chamado_id: int, status: str) -> None:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE chamados SET status = ? WHERE id = ?",
@@ -615,7 +524,7 @@ class DatabaseManager:
             conn.commit()
 
     def update_chamado_flow(self, chamado_id: int, status: str, responsavel: str) -> None:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE chamados SET status = ?, responsavel = ? WHERE id = ?",
@@ -627,9 +536,9 @@ class DatabaseManager:
         imported = 0
         skipped = 0
 
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            legacy_conn = std_sqlite3.connect(legacy_db_path)
+            legacy_conn = sqlite3.connect(legacy_db_path)
             legacy_cur = legacy_conn.cursor()
 
             query = """
@@ -706,7 +615,7 @@ class DatabaseManager:
         return imported, skipped
 
     def fetch_chamado_messages(self, chamado_id: int, canal: str) -> list[dict[str, str]]:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             rows = cursor.execute(
@@ -728,7 +637,7 @@ class DatabaseManager:
         mensagem: str,
         arquivo: str,
     ) -> None:
-        with self._connect() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
