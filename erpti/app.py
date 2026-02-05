@@ -2251,7 +2251,10 @@ class ERPDesktopApp(tk.Tk):
         scroll.grid(row=0, column=1, sticky="ns")
         table.configure(yscrollcommand=scroll.set)
 
-        closed_calls = [c for c in self.chamado_data if str(c.get("status", "")).lower() == "fechado"]
+        closed_statuses = {"fechado", "finalizado", "resolved"}
+        closed_calls = [
+            c for c in self.chamado_data if str(c.get("status", "")).strip().lower() in closed_statuses
+        ]
         for chamado in closed_calls:
             table.insert(
                 "",
