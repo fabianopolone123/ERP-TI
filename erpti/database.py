@@ -106,6 +106,16 @@ class DatabaseManager:
     def _ensure_encrypted_database(self) -> None:
         if self.db_path.exists():
             if self._is_sqlcipher_database(self.db_path):
+                # Remove legado sem criptografia para evitar abertura acidental no DB Browser.
+                if (
+                    self.source_db_path != self.db_path
+                    and self.source_db_path.exists()
+                    and self._is_plain_sqlite_database(self.source_db_path)
+                ):
+                    try:
+                        self.source_db_path.unlink()
+                    except PermissionError:
+                        pass
                 return
             raise RuntimeError("Banco criptografado encontrado, mas nao foi possivel abrir com a chave atual.")
 
