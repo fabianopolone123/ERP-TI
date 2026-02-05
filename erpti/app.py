@@ -91,6 +91,7 @@ class ERPDesktopApp(tk.Tk):
                 "id",
                 "departamento",
                 "nome",
+                "cargo",
                 "perfil",
                 "username",
                 "senha",
@@ -502,8 +503,9 @@ class ERPDesktopApp(tk.Tk):
             command=lambda: self._open_form_dialog(
                 "Cadastrar usuario",
                 [
-                    ("Departamento", "departamento"),
                     ("Nome completo", "nome"),
+                    ("Cargo", "cargo"),
+                    ("Departamento", "departamento"),
                 ],
                 self._register_user,
             ),
@@ -516,7 +518,7 @@ class ERPDesktopApp(tk.Tk):
             style="Action.TButton",
         ).grid(row=2, column=0, sticky="e")
 
-        columns = ("departamento", "nome", "perfil")
+        columns = ("nome", "cargo", "departamento", "perfil")
         users_table_frame = ttk.Frame(tab, style="Card.TFrame")
         users_table_frame.grid(row=3, column=0, sticky="nsew", pady=(18, 0))
         users_table_frame.columnconfigure(0, weight=1)
@@ -525,22 +527,28 @@ class ERPDesktopApp(tk.Tk):
         self.users_table = ttk.Treeview(users_table_frame, columns=columns, show="headings", height=12)
         self._users_sort_reverse = {column: False for column in columns}
         self.users_table.heading(
-            "departamento",
-            text="Departamento",
-            command=lambda: self._sort_users_table("departamento"),
-        )
-        self.users_table.heading(
             "nome",
             text="Nome completo",
             command=lambda: self._sort_users_table("nome"),
+        )
+        self.users_table.heading(
+            "cargo",
+            text="Cargo",
+            command=lambda: self._sort_users_table("cargo"),
+        )
+        self.users_table.heading(
+            "departamento",
+            text="Departamento",
+            command=lambda: self._sort_users_table("departamento"),
         )
         self.users_table.heading(
             "perfil",
             text="Grupos",
             command=lambda: self._sort_users_table("perfil"),
         )
+        self.users_table.column("nome", width=260)
+        self.users_table.column("cargo", width=200)
         self.users_table.column("departamento", width=180)
-        self.users_table.column("nome", width=320)
         self.users_table.column("perfil", width=260)
         self.users_table.grid(row=0, column=0, sticky="nsew")
 
@@ -553,10 +561,10 @@ class ERPDesktopApp(tk.Tk):
         tab.rowconfigure(3, weight=1)
 
     def _register_user(self, new_user: dict[str, str]) -> bool:
-        if not new_user.get("departamento") or not new_user.get("nome"):
+        if not new_user.get("departamento") or not new_user.get("nome") or not new_user.get("cargo"):
             messagebox.showwarning(
                 "Campos obrigatorios",
-                "Preencha departamento e nome completo.",
+                "Preencha departamento, nome completo e cargo.",
             )
             return False
 
@@ -564,6 +572,7 @@ class ERPDesktopApp(tk.Tk):
         user_to_save = {
             "departamento": new_user["departamento"],
             "nome": new_user["nome"],
+            "cargo": new_user["cargo"],
             "perfil": "",
             "username": "",
             "senha": "",
@@ -580,6 +589,7 @@ class ERPDesktopApp(tk.Tk):
                 "id",
                 "departamento",
                 "nome",
+                "cargo",
                 "perfil",
                 "username",
                 "senha",
@@ -602,8 +612,9 @@ class ERPDesktopApp(tk.Tk):
                 "",
                 "end",
                 values=(
-                    user["departamento"],
                     user["nome"],
+                    user.get("cargo", ""),
+                    user["departamento"],
                     user.get("perfil", ""),
                 ),
             )
@@ -720,7 +731,7 @@ class ERPDesktopApp(tk.Tk):
         def refresh_users() -> None:
             users = self.db.fetch_rows(
                 "users",
-                ("id", "departamento", "nome", "perfil", "username", "senha", "senha_hash"),
+                ("id", "departamento", "nome", "cargo", "perfil", "username", "senha", "senha_hash"),
             )
             state["users"] = users
             display = []
@@ -824,6 +835,7 @@ class ERPDesktopApp(tk.Tk):
                     "id",
                     "departamento",
                     "nome",
+                    "cargo",
                     "perfil",
                     "username",
                     "senha",

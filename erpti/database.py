@@ -51,6 +51,7 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     departamento TEXT NOT NULL,
                     nome TEXT NOT NULL,
+                    cargo TEXT NOT NULL DEFAULT '',
                     perfil TEXT NOT NULL DEFAULT '',
                     username TEXT NOT NULL DEFAULT '',
                     senha TEXT NOT NULL DEFAULT '',
@@ -63,6 +64,8 @@ class DatabaseManager:
             user_columns = {row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()}
             if "perfil" not in user_columns:
                 cursor.execute("ALTER TABLE users ADD COLUMN perfil TEXT NOT NULL DEFAULT ''")
+            if "cargo" not in user_columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN cargo TEXT NOT NULL DEFAULT ''")
             if "username" not in user_columns:
                 cursor.execute("ALTER TABLE users ADD COLUMN username TEXT NOT NULL DEFAULT ''")
             if "senha" not in user_columns:
