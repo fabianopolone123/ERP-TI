@@ -181,6 +181,7 @@ class DatabaseManager:
                     tipo TEXT NOT NULL DEFAULT '',
                     urgencia TEXT NOT NULL DEFAULT '',
                     arquivo TEXT NOT NULL DEFAULT '',
+                    responsavel TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL
                 )
                 """
@@ -210,6 +211,8 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE chamados ADD COLUMN urgencia TEXT NOT NULL DEFAULT ''")
             if "arquivo" not in chamado_columns:
                 cursor.execute("ALTER TABLE chamados ADD COLUMN arquivo TEXT NOT NULL DEFAULT ''")
+            if "responsavel" not in chamado_columns:
+                cursor.execute("ALTER TABLE chamados ADD COLUMN responsavel TEXT NOT NULL DEFAULT ''")
             if "legacy_source" not in chamado_columns:
                 cursor.execute(
                     "ALTER TABLE chamados ADD COLUMN legacy_source TEXT NOT NULL DEFAULT ''"
@@ -384,15 +387,16 @@ class DatabaseManager:
         urgencia: str,
         arquivo: str,
         status: str,
+        responsavel: str = "",
     ) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO chamados (titulo, descricao, autor, tipo, urgencia, arquivo, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO chamados (titulo, descricao, autor, tipo, urgencia, arquivo, responsavel, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (titulo, descricao, autor, tipo, urgencia, arquivo, status),
+                (titulo, descricao, autor, tipo, urgencia, arquivo, responsavel, status),
             )
             conn.commit()
             return int(cursor.lastrowid)
@@ -403,6 +407,15 @@ class DatabaseManager:
             cursor.execute(
                 "UPDATE chamados SET status = ? WHERE id = ?",
                 (status, chamado_id),
+            )
+            conn.commit()
+
+    def update_chamado_flow(self, chamado_id: int, status: str, responsavel: str) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE chamados SET status = ?, responsavel = ? WHERE id = ?",
+                (status, responsavel, chamado_id),
             )
             conn.commit()
 
@@ -421,11 +434,14 @@ class DatabaseManager:
                     t.title,
                     t.description,
                     COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.username, ''),
+                    COALESCE(NULLIF(TRIM(au.first_name || ' ' || au.last_name), ''), au.username, ''),
                     t.ticket_type,
                     t.urgency,
+                    t.status,
                     COALESCE(a.files, '')
                 FROM tickets_ticket t
                 LEFT JOIN auth_user u ON u.id = t.created_by_id
+                LEFT JOIN auth_user au ON au.id = t.assigned_to_id
                 LEFT JOIN (
                     SELECT ticket_id, GROUP_CONCAT(file, '; ') AS files
                     FROM tickets_ticketattachment
@@ -436,7 +452,7 @@ class DatabaseManager:
             legacy_rows = legacy_cur.execute(query).fetchall()
 
             for row in legacy_rows:
-                legacy_id, title, description, autor, ticket_type, urgency, files = row
+                legacy_id, title, description, autor, assigned_to, ticket_type, urgency, old_status, files = row
                 exists = cursor.execute(
                     """
                     SELECT 1
@@ -450,11 +466,20 @@ class DatabaseManager:
                     skipped += 1
                     continue
 
+                mapped_status = "aberto"
+                mapped_responsavel = ""
+                old_status = (old_status or "").strip().lower()
+                if old_status in {"resolved", "fechado", "finalizado"}:
+                    mapped_status = "fechado"
+                elif old_status in {"in_progress", "em_atendimento"}:
+                    mapped_status = "em_atendimento"
+                    mapped_responsavel = assigned_to or ""
+
                 cursor.execute(
                     """
                     INSERT INTO chamados (
-                        titulo, descricao, autor, tipo, urgencia, arquivo, status, legacy_source, legacy_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        titulo, descricao, autor, tipo, urgencia, arquivo, responsavel, status, legacy_source, legacy_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         title or "",
@@ -463,7 +488,8 @@ class DatabaseManager:
                         ticket_type or "",
                         urgency or "",
                         files or "",
-                        "pendente",
+                        mapped_responsavel,
+                        mapped_status,
                         "old_tickets",
                         legacy_id,
                     ),

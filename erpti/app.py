@@ -157,6 +157,7 @@ class ERPDesktopApp(tk.Tk):
                 "tipo",
                 "urgencia",
                 "arquivo",
+                "responsavel",
                 "status",
                 "legacy_source",
                 "legacy_id",
@@ -1612,13 +1613,19 @@ class ERPDesktopApp(tk.Tk):
             actions,
             text="Chamados finalizados",
             style="Logout.TButton",
-            command=self._finalize_selected_chamado,
+            command=self._open_closed_chamados_window,
         ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="Fechar selecionado",
+            style="Logout.TButton",
+            command=self._finalize_selected_chamado,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
         board = ttk.Frame(tab, style="Card.TFrame")
         board.grid(row=3, column=0, sticky="nsew")
         ti_users = self._get_ti_group_users()
-        columns = [("pendente", "Chamados pendentes")] + [
+        columns = [("aberto", "Chamados abertos")] + [
             (f"user_{user['id']}", user["nome"]) for user in ti_users
         ]
         for idx in range(len(columns)):
@@ -1632,6 +1639,7 @@ class ERPDesktopApp(tk.Tk):
         self._chamado_assignee_lookup = {
             user["nome"].strip().lower(): f"user_{user['id']}" for user in ti_users
         }
+        self._chamado_status_to_name = {f"user_{user['id']}": user["nome"] for user in ti_users}
 
         for col_index, (status_key, title) in enumerate(columns):
             column_frame = ttk.Frame(board, style="Card.TFrame", padding=8)
@@ -1682,9 +1690,11 @@ class ERPDesktopApp(tk.Tk):
             listbox.delete(0, tk.END)
 
         for chamado in self.chamado_data:
-            status = self._resolve_chamado_status(chamado)
+            status = self._resolve_chamado_column(chamado)
+            if not status:
+                continue
             if status not in self.chamado_lists:
-                status = "pendente"
+                status = "aberto"
             item_label = f"{chamado['id']} - [{chamado.get('urgencia', '')}] {chamado['titulo']}"
             self.chamado_lists[status].insert(tk.END, item_label)
 
@@ -1703,14 +1713,25 @@ class ERPDesktopApp(tk.Tk):
             return False
         return any(user["nome"].strip().lower() == current_name for user in self._get_ti_group_users())
 
-    def _resolve_chamado_status(self, chamado: dict[str, str]) -> str:
-        raw_status = str(chamado.get("status", "pendente")).strip().lower()
+    def _resolve_chamado_column(self, chamado: dict[str, str]) -> str | None:
+        raw_status = str(chamado.get("status", "aberto")).strip().lower()
+        responsavel = str(chamado.get("responsavel", "")).strip().lower()
+
+        if raw_status in {"fechado", "resolved", "finalizado"}:
+            return None
+        if raw_status in {"aberto", "new", "awaiting", "pendente"}:
+            return "aberto"
         if raw_status in self.chamado_lists:
             return raw_status
-        mapped = self._chamado_assignee_lookup.get(raw_status)
-        if mapped and mapped in self.chamado_lists:
-            return mapped
-        return "pendente"
+
+        if raw_status in {"em_atendimento", "in_progress"}:
+            mapped = self._chamado_assignee_lookup.get(responsavel)
+            return mapped or "aberto"
+
+        mapped_by_status = self._chamado_assignee_lookup.get(raw_status)
+        if mapped_by_status:
+            return mapped_by_status
+        return "aberto"
 
     def _import_legacy_chamados(self) -> None:
         default_path = "dbchamados antigos.sqlite3"
@@ -1736,6 +1757,7 @@ class ERPDesktopApp(tk.Tk):
                 "tipo",
                 "urgencia",
                 "arquivo",
+                "responsavel",
                 "status",
                 "legacy_source",
                 "legacy_id",
@@ -1768,7 +1790,8 @@ class ERPDesktopApp(tk.Tk):
             tipo,
             urgencia,
             arquivo,
-            "pendente",
+            "aberto",
+            "",
         )
         self.chamado_data.append(
             {
@@ -1779,7 +1802,8 @@ class ERPDesktopApp(tk.Tk):
                 "tipo": tipo,
                 "urgencia": urgencia,
                 "arquivo": arquivo,
-                "status": "pendente",
+                "responsavel": "",
+                "status": "aberto",
             }
         )
         self._refresh_chamado_board()
@@ -1988,6 +2012,7 @@ class ERPDesktopApp(tk.Tk):
             ("Titulo", chamado.get("titulo", "")),
             ("Autor", chamado.get("autor", "") or "-"),
             ("Status", chamado.get("status", "")),
+            ("Responsavel", chamado.get("responsavel", "") or "-"),
             ("Tipo", chamado.get("tipo", "")),
             ("Urgencia", chamado.get("urgencia", "")),
             ("Arquivo", chamado.get("arquivo", "")),
@@ -2163,19 +2188,97 @@ class ERPDesktopApp(tk.Tk):
         load_messages()
 
     def _move_chamado_to_status(self, chamado_id: int, target_status: str) -> None:
+        new_status = "aberto"
+        new_responsavel = ""
+        if target_status.startswith("user_"):
+            new_status = "em_atendimento"
+            new_responsavel = self._chamado_status_to_name.get(target_status, "")
+        elif target_status == "aberto":
+            new_status = "aberto"
+            new_responsavel = ""
+
         for chamado in self.chamado_data:
             if int(chamado["id"]) == int(chamado_id):
-                chamado["status"] = target_status
+                chamado["status"] = new_status
+                chamado["responsavel"] = new_responsavel
                 break
-        self.db.update_chamado_status(chamado_id, target_status)
+        self.db.update_chamado_flow(chamado_id, new_status, new_responsavel)
         self._refresh_chamado_board()
 
     def _finalize_selected_chamado(self) -> None:
         if not self._chamado_selected_id:
             messagebox.showwarning("Selecao obrigatoria", "Selecione um chamado para finalizar.")
             return
-        self._move_chamado_to_status(self._chamado_selected_id, "finalizado")
+        current_responsavel = ""
+        for chamado in self.chamado_data:
+            if int(chamado["id"]) == int(self._chamado_selected_id):
+                chamado["status"] = "fechado"
+                current_responsavel = chamado.get("responsavel", "")
+                break
+        self.db.update_chamado_flow(self._chamado_selected_id, "fechado", current_responsavel)
+        self._refresh_chamado_board()
         self._chamado_selected_id = None
+
+    def _open_closed_chamados_window(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Chamados finalizados")
+        width = 900
+        height = 560
+        dialog.geometry(f"{width}x{height}")
+        dialog.configure(bg="#0A1B2A")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, style="Card.TFrame", padding=14)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        columns = ("id", "titulo", "autor", "tipo", "urgencia", "responsavel")
+        table = ttk.Treeview(frame, columns=columns, show="headings")
+        table.heading("id", text="ID")
+        table.heading("titulo", text="Titulo")
+        table.heading("autor", text="Autor")
+        table.heading("tipo", text="Tipo")
+        table.heading("urgencia", text="Urgencia")
+        table.heading("responsavel", text="Responsavel")
+        table.column("id", width=70)
+        table.column("titulo", width=280)
+        table.column("autor", width=160)
+        table.column("tipo", width=110)
+        table.column("urgencia", width=100)
+        table.column("responsavel", width=160)
+        table.grid(row=0, column=0, sticky="nsew")
+
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=table.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        table.configure(yscrollcommand=scroll.set)
+
+        closed_calls = [c for c in self.chamado_data if str(c.get("status", "")).lower() == "fechado"]
+        for chamado in closed_calls:
+            table.insert(
+                "",
+                "end",
+                values=(
+                    chamado.get("id"),
+                    chamado.get("titulo", ""),
+                    chamado.get("autor", ""),
+                    chamado.get("tipo", ""),
+                    chamado.get("urgencia", ""),
+                    chamado.get("responsavel", ""),
+                ),
+            )
+
+        def open_selected(_event=None) -> None:
+            selection = table.selection()
+            if not selection:
+                return
+            values = table.item(selection[0], "values")
+            if not values:
+                return
+            self._open_chamado_details(int(values[0]))
+
+        table.bind("<Double-Button-1>", open_selected)
 
     def _toggle_fullscreen(self, _event=None):
         self._fullscreen = not self._fullscreen
